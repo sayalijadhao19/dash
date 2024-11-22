@@ -1,0 +1,90 @@
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import linear_kernel, pairwise_distances
+from scipy.sparse import csr_matrix
+from sklearn.decomposition import TruncatedSVD
+
+# Step 1: Load Movie and Ratings Data
+movies_df = pd.read_csv(r"IMDB Top 250 Movies.csv")
+
+ratings_data = {
+    "user_id": [1, 1, 1, 2, 2, 3, 3],
+    "name": [
+        "The Shawshank Redemption",
+        "The Godfather",
+        "The Dark Knight",
+        "The Dark Knight",
+        "The Godfather",
+        "The Shawshank Redemption",
+        "The Dark Knight",
+    ],
+    "rating": [5, 4, 5, 4, 5, 5, 4],
+}
+ratings_df = pd.DataFrame(ratings_data)
+
+# Step 2: Preprocess Data for Content-Based Filtering
+# Combine genres and taglines into a single string
+movies_df["content"] = movies_df["genre"] + " " + movies_df["tagline"]
+
+# Compute the TF-IDF matrix
+tfidf = TfidfVectorizer(stop_words="english")
+tfidf_matrix = tfidf.fit_transform(movies_df["content"])
+
+# Compute cosine similarity matrix
+cosine_sim = linear_kernel(tfidf_matrix, tfidf_matrix)
+
+def get_content_based_recommendations(name, cosine_sim=cosine_sim):
+    # Find the index of the movie
+    idx = movies_df[movies_df["name"] == name].index[0]
+    sim_scores = list(enumerate(cosine_sim[idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    # Get top 3 similar movies
+    return [movies_df["name"].iloc[i[0]] for i in sim_scores[1:4]]
+
+# Step 3: Collaborative Filtering
+# Create a user-item matrix
+user_item_matrix = ratings_df.pivot(index="user_id", columns="name", values="rating").fillna(0)
+
+# Convert to sparse matrix
+user_item_sparse = csr_matrix(user_item_matrix.values)
+
+# Apply SVD
+svd = TruncatedSVD(n_components=2)
+latent_matrix = svd.fit_transform(user_item_sparse)
+
+def get_collaborative_recommendations(user_id):
+    # Get the index of the user in the latent matrix
+    user_idx = ratings_df["user_id"].unique().tolist().index(user_id)
+    
+    # Compute distances between the user and others
+    similar_users = pairwise_distances(
+        latent_matrix[user_idx].reshape(1, -1), latent_matrix, metric="cosine"
+    )[0]
+    
+    # Get indices of the 3 most similar users
+    similar_users_indices = similar_users.argsort()[:3]
+    
+    # Collect recommended movies
+    recommended_movies = []
+    for idx in similar_users_indices:
+        recommended_movies.extend(
+            ratings_df[ratings_df["user_id"] == ratings_df["user_id"].unique()[idx]]["name"].tolist()
+        )
+    
+    return list(set(recommended_movies))
+
+# Step 4: Hybrid Recommendations
+def hybrid_recommendations(user_id, name):
+    # Combine content-based and collaborative recommendations
+    content_based = get_content_based_recommendations(name)
+    collaborative_based = get_collaborative_recommendations(user_id)
+    combined = list(set(content_based + collaborative_based))
+    return combined
+
+# Step 5: Generate Recommendations
+user_id = 1
+movie_name = "The Godfather"
+recommended_movies = hybrid_recommendations(user_id, movie_name)
+
+print("Hybrid Recommendations for user {} and movie '{}':".format(user_id, movie_name))
+print(recommended_movies)

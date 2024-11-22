@@ -1,0 +1,67 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+from scipy.sparse.linalg import svds
+from scipy.sparse import csr_matrix
+
+# Load the dataset
+data = pd.read_csv(r"Womens Clothing E-Commerce Reviews.csv")
+
+# Group by 'Age' and 'Clothing ID', and calculate the mean rating
+data = data.groupby(["Age", "Clothing ID"], as_index=False).agg({"Rating": "mean"})
+
+# Create the user-item matrix
+user_item_matrix = data.pivot(index="Age", columns="Clothing ID", values="Rating").fillna(0)
+
+# Convert the user-item matrix to a sparse matrix
+user_item_sparse_matrix = csr_matrix(user_item_matrix.values)
+
+# Matrix factorization using Singular Value Decomposition (SVD)
+# Choosing k (number of latent features) as 2 for simplicity
+U, sigma, Vt = svds(user_item_sparse_matrix, k=2)
+sigma = np.diag(sigma)
+
+# Reconstruct the predicted ratings matrix
+predicted_ratings = np.dot(np.dot(U, sigma), Vt)
+predicted_ratings_df = pd.DataFrame(
+    predicted_ratings, columns=user_item_matrix.columns, index=user_item_matrix.index
+)
+
+# Define a recommendation function
+def recommend_items(user_age, num_recommendations=3):
+    if user_age not in predicted_ratings_df.index:
+        raise ValueError("User age not found in the dataset.")
+
+    # Get the predicted ratings for the given user age
+    user_predictions = predicted_ratings_df.loc[user_age].sort_values(ascending=False)
+
+    # Select the top recommended items
+    recommended_items = user_predictions.head(num_recommendations).index.tolist()
+    return recommended_items
+
+# Attempt to get recommendations for a user aged 34
+try:
+    recommendations = recommend_items(user_age=34)
+    print("Recommendations for user aged 34:", recommendations)
+except ValueError as e:
+    print(e)
+
+# Evaluate the model using Root Mean Squared Error (RMSE)
+
+# Split data into train and test sets
+train_data, test_data = train_test_split(data, test_size=0.2, random_state=42)
+
+# Create user-item matrices for train and test sets
+train_matrix = train_data.pivot(index="Age", columns="Clothing ID", values="Rating").fillna(0)
+test_matrix = test_data.pivot(index="Age", columns="Clothing ID", values="Rating").fillna(0)
+
+# Ensure the test matrix aligns with the predicted ratings dimensions
+common_indices = test_matrix.index.intersection(predicted_ratings_df.index)
+common_columns = test_matrix.columns.intersection(predicted_ratings_df.columns)
+test_matrix = test_matrix.loc[common_indices, common_columns]
+predicted_matrix = predicted_ratings_df.loc[common_indices, common_columns]
+
+# Calculate RMSE
+rmse = np.sqrt(mean_squared_error(test_matrix.values, predicted_matrix.values))
+print("RMSE of the model:", rmse)
